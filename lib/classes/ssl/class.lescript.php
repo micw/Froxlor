@@ -62,7 +62,7 @@ class lescript
 			// generate and save new private key for account
 			// ---------------------------------------------
 
-			$this->log('Starting new account registration');
+			$this->log('Cretating new account key');
 			$keys = $this->generateKey();
 			// Only store the accountkey in production, in staging always generate a new key
 			if (Settings::Get('system.letsencryptca') == 'production') {
@@ -79,6 +79,11 @@ class lescript
 				}
 			}
 			$this->accountKey = $keys['private'];
+			// TODO: setting "leregistered" = false
+		}
+		
+		if (!(/*setting "leregistered")*/))
+			$this->log('Starting new account registration');
 
 			$response = $this->postNewReg();
 			if ($this->client->getLastCode() != 201) {
@@ -89,7 +94,9 @@ class lescript
 			// Terms of Servce are optional according to ACME specs; if no ToS are presented, no need to update registration
 			if (!empty($this->license)) {
 				$this->postRegAgreement(parse_url($this->client->getLastLocation(), PHP_URL_PATH));
+				// FIXME: hier fehlt die Fehlerbehandlung
 			}
+			// TODO: setting "leregistered" = true
 			$this->log('New account certificate registered');
 		} else {
 
