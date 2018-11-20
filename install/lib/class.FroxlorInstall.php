@@ -1106,7 +1106,7 @@ class FroxlorInstall
 			$this->_activelng = $_GET['language'];
 		} elseif (isset($_POST['language']) && isset($this->_languages[$_POST['language']])) {
 			$this->_activelng = $_POST['language'];
-		} else {
+		} elseif (isset($_SERVER['HTTP_ACCEPT_LANGUAGE'])) {
 			// try to guess the right language
 			$lang = substr($_SERVER['HTTP_ACCEPT_LANGUAGE'], 0, 2);
 			switch ($lang) {
@@ -1120,6 +1120,8 @@ class FroxlorInstall
 					$this->_activelng = $standardlanguage;
 					break;
 			}
+		} else {
+			$this->_activelng = $standardlanguage;
 		}
 		
 		// require english base language as fallback
