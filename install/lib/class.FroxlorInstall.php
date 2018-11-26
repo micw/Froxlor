@@ -113,6 +113,55 @@ class FroxlorInstall
 		$this->_showPage();
 	}
 
+	public function run_cli($argv)
+	{
+		// include the functions
+		require $this->_basepath . '/lib/functions.php';
+		// include the MySQL-Table-Definitions
+		require $this->_basepath . '/lib/tables.inc.php';
+		// include language
+		$this->_includeLanguageFile();
+
+		if (count($argv)!=2 || !in_array($argv[1],array('--check','--setup')) )
+		{
+			print('USAGE: ' . $argv[0] . ' --check|--setup' . PHP_EOL);
+			exit(1);
+		}
+
+		print('Checking system requirements ...'.PHP_EOL);
+		$_die=0;
+		$requirement_check_result=$this->_requirementCheck();
+		foreach ($requirement_check_result as &$rc)
+		{
+			if ($rc['status']=='green')
+			{
+				print(' OK:      ');
+			}
+			else if ($rc['status']=='orange')
+			{
+				print(' WARNING: ');
+			}
+			else
+			{
+				$_die=1;
+				print(' ERROR:   ');
+			}
+
+			print(str_pad($rc['requirement'],45,' ').' '.$rc['message'].PHP_EOL);
+			if (array_key_exists('description',$rc))
+			{
+				print('           '.$rc['description'].PHP_EOL);
+			}
+
+		}
+		if ($_die)
+		{
+			print('Please install the required system requirements to continue!'.PHP_EOL);
+			exit(1);
+		}
+		print(PHP_EOL);
+	}
+
 	/**
 	 * build up and show the install-process-pages
 	 */
@@ -140,7 +189,7 @@ class FroxlorInstall
 		} else {
 			// check for system-requirements first
 			$pagetitle = $this->_lng['requirements']['title'];
-			$result = $this->_requirementCheck();
+			$result = $this->_requirementCheckResult();
 		}
 		// output everything
 		$pagecontent = $result['pagecontent'];
@@ -923,99 +972,137 @@ class FroxlorInstall
 	 */
 	private function _requirementCheck()
 	{
+		$result=array();
+
+		// check for correct php version
+		$current=array('requirement'=>$this->_lng['requirements']['phpversion']);
+		if (version_compare("5.3.0", PHP_VERSION, ">=")) {
+			$current['status']='red';
+			$current['message']=$this->_lng['requirements']['notfound'] . ' (' . PHP_VERSION . ')';
+		} else {
+			if (version_compare("5.6.0", PHP_VERSION, ">=")) {
+				$current['status']='orange';
+				$current['message']=$this->_lng['requirements']['newerphpprefered'] . ' (' . PHP_VERSION . ')';
+			} else {
+				$current['status']='green';
+				$current['message']=PHP_VERSION;
+			}
+		}
+		array_push($result,$current);
+
+		// Check if magic_quotes_runtime is active | get_magic_quotes_runtime() is always FALSE since 5.4
+		if (version_compare(PHP_VERSION, "5.4.0", "<")) {
+			$current=array('requirement'=>$this->_lng['requirements']['phpmagic_quotes_runtime']);
+			if (get_magic_quotes_runtime()) {
+				// deactivate it
+				set_magic_quotes_runtime(false);
+				$current['status']='orange';
+				$current['message']=$this->_lng['requirements']['not_true'];
+				$current['description']=$this->_lng['requirements']['phpmagic_quotes_runtime_description'];
+			} else {
+				$current['status']='green';
+				$current['message']='off';
+			}
+			array_push($result,$current);
+		}
+
+		// check for php_pdo and pdo_mysql
+		$current=array('requirement'=>$this->_lng['requirements']['phppdo']);
+		if (! extension_loaded('pdo') || in_array("mysql", PDO::getAvailableDrivers()) == false) {
+			$current['status']='red';
+			$current['message']=$this->_lng['requirements']['notinstalled'];
+		} else {
+			$current['status']='green';
+			$current['message']=$this->_lng['requirements']['installed'];
+		}
+		array_push($result,$current);
+
+		// check for session-extension
+		$this->_requirementCheckFor($result, 'session', false, 'phpsession');
+
+		// check for ctype-extension
+		$this->_requirementCheckFor($result, 'ctype', false, 'phpctype');
+
+		// check for SimpleXML-extension
+		$this->_requirementCheckFor($result, 'simplexml', false, 'phpsimplexml');
+
+		// check for xml-extension
+		$this->_requirementCheckFor($result, 'xml', false, 'phpxml');
 		
+		// check for filter-extension
+		$this->_requirementCheckFor($result, 'filter', false, 'phpfilter');
+		
+		// check for posix-extension
+		$this->_requirementCheckFor($result, 'posix', false, 'phpposix');
+
+		// check for mbstring-extension
+		$this->_requirementCheckFor($result, 'mbstring', false, 'phpmbstring');
+		
+		// check for curl extension
+		$this->_requirementCheckFor($result, 'curl', false, 'phpcurl');
+
+		// check for json extension
+		$this->_requirementCheckFor($result, 'json', false, 'phpjson');
+
+		// check for bcmath extension
+		$this->_requirementCheckFor($result, 'bcmath', true, 'phpbcmath', 'bcmathdescription');
+		
+		// check for zip extension
+		$this->_requirementCheckFor($result, 'zip', true, 'phpzip', 'zipdescription');
+
+		// check for open_basedir
+		$current=array('requirement'=>$this->_lng['requirements']['openbasedir']);
+		$php_ob = @ini_get("open_basedir");
+		if (! empty($php_ob) && $php_ob != '') {
+			$current['status']='orange';
+			$current['message']=$this->_lng['requirements']['activated'];
+			$current['description']=$this->_lng['requirements']['openbasedirenabled'];
+		} else {
+			$current['status']='green';
+			$current['message']='off';
+		}
+		array_push($result,$current);
+		
+		// check for mysqldump binary in order to backup existing database
+		$current=array('requirement'=>$this->_lng['requirements']['mysqldump']);
+
+		if (file_exists("/usr/bin/mysqldump") || file_exists("/usr/local/bin/mysqldump")) {
+			$current['status']='green';
+			$current['message']=$this->_lng['requirements']['installed'];
+		} else {
+			$current['status']='orange';
+			$current['message']=$this->_lng['requirements']['notinstalled'];
+			$current['description']=$this->_lng['requirements']['mysqldumpmissing'];
+		}
+		array_push($result,$current);
+
+		return $result;
+	}
+	/**
+	 * check for requirements froxlor needs, return result array for html
+	 */
+	private function _requirementCheckResult()
+	{
 		// indicator whether we need to abort or not
 		$_die = false;
 		
 		$content = "<table class=\"noborder\">";
 		
-		// check for correct php version
-		$content .= $this->_status_message('begin', $this->_lng['requirements']['phpversion']);
-		
-		if (version_compare("5.3.0", PHP_VERSION, ">=")) {
-			$content .= $this->_status_message('red', $this->_lng['requirements']['notfound'] . ' (' . PHP_VERSION . ')');
-			$_die = true;
-		} else {
-			if (version_compare("5.6.0", PHP_VERSION, ">=")) {
-				$content .= $this->_status_message('orange', $this->_lng['requirements']['newerphpprefered'] . ' (' . PHP_VERSION . ')');
-			} else {
-				$content .= $this->_status_message('green', PHP_VERSION);
+		$requirement_check_result=$this->_requirementCheck();
+		foreach ($requirement_check_result as &$rc)
+		{
+			if ($rc['status']=='green' && $rc['status']=='orange')
+			{
+				$_die = true;
+			}
+			$content .= $this->_status_message('begin', $rc['requirement']);
+			$message=$rc['message'];
+			if (array_key_exists('description',$rc))
+			{
+				$message.='<br>'.$rc['description'];
 			}
 		}
-		
-		// Check if magic_quotes_runtime is active | get_magic_quotes_runtime() is always FALSE since 5.4
-		if (version_compare(PHP_VERSION, "5.4.0", "<")) {
-			$content .= $this->_status_message('begin', $this->_lng['requirements']['phpmagic_quotes_runtime']);
-			if (get_magic_quotes_runtime()) {
-				// deactivate it
-				set_magic_quotes_runtime(false);
-				$content .= $this->_status_message('orange', $this->_lng['requirements']['not_true'] . "<br />" . $this->_lng['requirements']['phpmagic_quotes_runtime_description']);
-			} else {
-				$content .= $this->_status_message('green', 'off');
-			}
-		}
-		
-		// check for php_pdo and pdo_mysql
-		$content .= $this->_status_message('begin', $this->_lng['requirements']['phppdo']);
-		
-		if (! extension_loaded('pdo') || in_array("mysql", PDO::getAvailableDrivers()) == false) {
-			$content .= $this->_status_message('red', $this->_lng['requirements']['notinstalled']);
-			$_die = true;
-		} else {
-			$content .= $this->_status_message('green', $this->_lng['requirements']['installed']);
-		}
 
-		// check for session-extension
-		$this->_requirementCheckFor($content, $_die, 'session', false, 'phpsession');
-
-		// check for ctype-extension
-		$this->_requirementCheckFor($content, $_die, 'ctype', false, 'phpctype');
-
-		// check for SimpleXML-extension
-		$this->_requirementCheckFor($content, $_die, 'simplexml', false, 'phpsimplexml');
-
-		// check for xml-extension
-		$this->_requirementCheckFor($content, $_die, 'xml', false, 'phpxml');
-		
-		// check for filter-extension
-		$this->_requirementCheckFor($content, $_die, 'filter', false, 'phpfilter');
-		
-		// check for posix-extension
-		$this->_requirementCheckFor($content, $_die, 'posix', false, 'phpposix');
-
-		// check for mbstring-extension
-		$this->_requirementCheckFor($content, $_die, 'mbstring', false, 'phpmbstring');
-		
-		// check for curl extension
-		$this->_requirementCheckFor($content, $_die, 'curl', false, 'phpcurl');
-
-		// check for json extension
-		$this->_requirementCheckFor($content, $_die, 'json', false, 'phpjson');
-
-		// check for bcmath extension
-		$this->_requirementCheckFor($content, $_die, 'bcmath', true, 'phpbcmath', 'bcmathdescription');
-		
-		// check for zip extension
-		$this->_requirementCheckFor($content, $_die, 'zip', true, 'phpzip', 'zipdescription');
-
-		// check for open_basedir
-		$content .= $this->_status_message('begin', $this->_lng['requirements']['openbasedir']);
-		$php_ob = @ini_get("open_basedir");
-		if (! empty($php_ob) && $php_ob != '') {
-			$content .= $this->_status_message('orange', $this->_lng['requirements']['activated'] . "<br />" . $this->_lng['requirements']['openbasedirenabled']);
-		} else {
-			$content .= $this->_status_message('green', 'off');
-		}
-		
-		// check for mysqldump binary in order to backup existing database
-		$content .= $this->_status_message('begin', $this->_lng['requirements']['mysqldump']);
-
-		if (file_exists("/usr/bin/mysqldump") || file_exists("/usr/local/bin/mysqldump")) {
-			$content .= $this->_status_message('green', $this->_lng['requirements']['installed']);
-		} else {
-			$content .= $this->_status_message('orange', $this->_lng['requirements']['notinstalled'] . "<br />" . $this->_lng['requirements']['mysqldumpmissing']);
-		}
-		
 		$content .= "</table>";
 		
 		// check if we have unrecoverable errors
@@ -1039,20 +1126,24 @@ class FroxlorInstall
 		);
 	}
 	
-	private function _requirementCheckFor(&$content, &$_die, $ext = '', $optional = false, $lng_txt = "", $lng_desc = "")
+	private function _requirementCheckFor(&$result, $ext = '', $optional = false, $lng_txt = "", $lng_desc = "")
 	{
-		$content .= $this->_status_message('begin', $this->_lng['requirements'][$lng_txt]);
-		
+		$current=array('requirement'=>$this->_lng['requirements'][$lng_txt]);
+
 		if (! extension_loaded($ext)) {
 			if (!$optional) {
-				$content .= $this->_status_message('red', $this->_lng['requirements']['notinstalled']);
-				$_die = true;
+				$current['status']='red';
+				$current['message']=$this->_lng['requirements']['notinstalled'];
 			} else {
-				$content .= $this->_status_message('orange', $this->_lng['requirements']['notinstalled'] . "<br />" . $this->_lng['requirements'][$lng_desc]);
+				$current['status']='orange';
+				$current['message']=$this->_lng['requirements']['notinstalled'];
+				$current['description']=$this->_lng['requirements'][$lng_desc];
 			}
 		} else {
-			$content .= $this->_status_message('green', $this->_lng['requirements']['installed']);
+			$current['status']='green';
+			$current['message']=$this->_lng['requirements']['installed'];
 		}
+		array_push($result,$current);
 	}
 
 	/**
