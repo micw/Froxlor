@@ -17,13 +17,7 @@
  */
 
 
-$frxinstall = new FroxlorInstall();
-if (php_sapi_name() == "cli")
-{
-	require 'lib/class.FroxlorInstall.php';
-	$frxinstall->run_cli($argv);
-}
-else
-{
-	$frxinstall->run();	
-}
+require 'lib/class.FroxlorInstallCli.php';
+
+$frxinstall = new FroxlorInstallCli();
+$frxinstall->run($argv);

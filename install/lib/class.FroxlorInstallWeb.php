@@ -21,7 +21,7 @@
 /**
  * Class FroxlorInstall
  *
- * Does the dirty work (backend only)
+ * Does the dirty work
  *
  * @copyright (c) the authors
  * @author Michael Kaufmann <mkaufmann@nutime.de>
@@ -30,7 +30,7 @@
  * @package Install
  *         
  */
-abstract class FroxlorInstall
+class FroxlorInstallWeb
 {
 
 	/**
@@ -39,21 +39,51 @@ abstract class FroxlorInstall
 	 *
 	 * @var string
 	 */
-	protected $_basepath = null;
+	private $_basepath = null;
+
+	/**
+	 * theme to use for the installation process
+	 *
+	 * @var string
+	 */
+	private $_theme = 'Sparkle';
+
+	/**
+	 * language array
+	 *
+	 * @var array
+	 */
+	private $_lng = null;
 
 	/**
 	 * install data
 	 *
 	 * @var array
 	 */
-	protected $_data = null;
+	private $_data = null;
+
+	/**
+	 * supported languages for install
+	 */
+	private $_languages = array(
+		'german' => 'Deutsch',
+		'english' => 'English',
+		'french' => 'Français'
+	);
 
 	/**
 	 * currently used language
 	 *
 	 * @var string
 	 */
-	protected $_activelng = 'english';
+	private $_activelng = 'english';
+
+	/**
+	 * check whether to abort due to errors
+	 *
+	 * @var bool
+	 */
+	private $_abort = false;
 
 	/**
 	 * Class constructor
@@ -64,52 +94,137 @@ abstract class FroxlorInstall
 		$this->_data = array();
 	}
 
-	protected abstract function _getField($fieldname);
-
 	/**
-	 * Gets the field, if it's empty, gets default and puts it into $this->_data
-	 * Adds an error if the field is missing
+	 * FC
 	 */
-	private function _getInstallDataField(&$errors, $fieldname, $default=null)
+	public function run()
 	{
-		$value=$this->_getField($fieldname);
-		if (!empty($value))
+		// send headers
+		$this->_sendHeaders();
+		// check if we have a valid installation already
+		$this->_checkUserdataFile();
+		// include the functions
+		require $this->_basepath . '/lib/functions.php';
+		// include the MySQL-Table-Definitions
+		require $this->_basepath . '/lib/tables.inc.php';
+		// include language
+		$this->_includeLanguageFile();
+		// show the action
+		$this->_showPage();
+	}
+
+	public function run_cli($argv)
+	{
+		// include the functions
+		require $this->_basepath . '/lib/functions.php';
+		// include the MySQL-Table-Definitions
+		require $this->_basepath . '/lib/tables.inc.php';
+		// include language
+		$this->_includeLanguageFile();
+
+		if (count($argv)!=2 || !in_array($argv[1],array('--check','--setup')) )
 		{
-			$this->_data[$fieldname]=$value;
+			print('USAGE: ' . $argv[0] . ' --check|--setup' . PHP_EOL);
+			exit(1);
 		}
-		else if ($default !== null)
+
+		print('Checking system requirements ...'.PHP_EOL);
+		$_die=0;
+		$requirement_check_result=$this->_requirementCheck();
+		foreach ($requirement_check_result as &$rc)
 		{
-			$this->_data[$fieldname]=$default;
+			if ($rc['status']=='green')
+			{
+				print(' OK:      ');
+			}
+			else if ($rc['status']=='orange')
+			{
+				print(' WARNING: ');
+			}
+			else
+			{
+				$_die=1;
+				print(' ERROR:   ');
+			}
+
+			print(str_pad($rc['requirement'],45,' ').' '.$rc['message'].PHP_EOL);
+			if (array_key_exists('description',$rc))
+			{
+				print('           '.$rc['description'].PHP_EOL);
+			}
+
 		}
-		else
+		if ($_die)
 		{
-			$this->_data[$fieldname]=null;
-			$errors[$fieldname] = 'missing';
+			print('Please install the required system requirements to continue!'.PHP_EOL);
+			exit(1);
 		}
+		print(PHP_EOL);
 	}
 
 	/**
-	 * Gathers and checks install data. Returns null if everything is ok and
-	 * an array of fields and errors otherwise
+	 * build up and show the install-process-pages
+	 */
+	private function _showPage()
+	{
+		// set theme for templates
+		$theme = $this->_theme;
+		eval("echo \"" . $this->_getTemplate("header") . "\";");
+		// check install-state
+		if ((isset($_POST['installstep']) && $_POST['installstep'] == '1') || (isset($_GET['check']) && $_GET['check'] == '1')) {
+			$pagetitle = $this->_lng['install']['title'];
+			if ($this->_checkPostData()) {
+				// ceck data and create userdata etc.etc.etc.
+				$result = $this->_doInstall();
+			} elseif (isset($_GET['check']) && $_GET['check'] == '1') {
+				// gather data
+				$result = $this->_showDataForm();
+			} else {
+				// this should not happen
+				$result = array(
+					'pagecontent' => "How did you manage to get here? Well, you shouldn't be here. Go back!",
+					'pagenavigation' => ''
+				);
+			}
+		} else {
+			// check for system-requirements first
+			$pagetitle = $this->_lng['requirements']['title'];
+			$result = $this->_requirementCheckResult();
+		}
+		// output everything
+		$pagecontent = $result['pagecontent'];
+		$pagenavigation = $result['pagenavigation'];
+		eval("echo \"" . $this->_getTemplate("page") . "\";");
+		$current_year = date('Y', time());
+		eval("echo \"" . $this->_getTemplate("footer") . "\";");
+	}
+
+	/**
+	 * gather data from $_POST if set; return true if all is set,
+	 * false otherwise
 	 *
 	 * @return boolean
 	 */
-	protected function _checkInstallData()
+	private function _checkPostData()
 	{
-		$errors=array();
-		$this->_getInstallDataField($errors, 'mysql_host', '127.0.0.1');
-		$this->_getInstallDataField($errors, 'mysql_database', 'froxlor');
-		$this->_getInstallDataField($errors, 'mysql_unpriv_user', 'froxlor');
-		$this->_getInstallDataField($errors, 'mysql_unpriv_pass');
-		$this->_getInstallDataField($errors, 'mysql_root_user', 'root');
-		$this->_getInstallDataField($errors, 'mysql_root_pass');
-		$this->_getInstallDataField($errors, 'admin_user', 'admin');
-		$this->_getInstallDataField($errors, 'admin_pass');
-		$this->_getInstallDataField($errors, 'activate_newsfeed', 1);
-		$this->_getInstallDataField($errors, 'httpuser');
-		$this->_getInstallDataField($errors, 'httpgroup');
-		$this->_getInstallDataField($errors, 'servername');
-		$this->_getInstallDataField($errors, 'serverip');
+		$this->_guessServerName();
+		$this->_guessServerIP();
+		$this->_guessWebserver();
+		
+		$this->_getPostField('mysql_host', '127.0.0.1');
+		$this->_getPostField('mysql_database', 'froxlor');
+		$this->_getPostField('mysql_unpriv_user', 'froxlor');
+		$this->_getPostField('mysql_unpriv_pass');
+		$this->_getPostField('mysql_root_user', 'root');
+		$this->_getPostField('mysql_root_pass');
+		$this->_getPostField('admin_user', 'admin');
+		$this->_getPostField('admin_pass1');
+		$this->_getPostField('admin_pass2');
+		$this->_getPostField('activate_newsfeed', 1);
+		$posixusername = posix_getpwuid(posix_getuid());
+		$this->_getPostField('httpuser', $posixusername['name']);
+		$posixgroup = posix_getgrgid(posix_getgid());
+		$this->_getPostField('httpgroup', $posixgroup['name']);
 		
 		if ($this->_data['mysql_host'] == 'localhost' || $this->_data['mysql_host'] == '127.0.0.1') {
 			$this->_data['mysql_access_host'] = $this->_data['mysql_host'];
@@ -118,18 +233,18 @@ abstract class FroxlorInstall
 		}
 		
 		// check system-hostname to be a FQDN
-		if (!empty($this->_data['servername']) && $this->_validate_ip($this->_data['servername']) !== false) {
-			$errors['servername']='must be a FQDN, not an IP address';
+		if ($this->_validate_ip($this->_data['servername']) !== false) {
+			$this->_data['servername'] = '';
 		}
 		
-		if (!empty($this->_data['serverip']) && $this->_validate_ip($this->_data['serverip']) == false) {
-			$errors['serverip']='must be a valid IP address';
+		if (empty($this->_data['serverip']) || $this->_validate_ip($this->_data['serverip']) == false) {
+			return false;
 		}
 		
-		if (!empty($this->_data['mysql_unpriv_user']) && $this->_data['mysql_unpriv_user']==$this->_data['mysql_root_user']) {
-			$errors['serverip']='must not be the root user';
+		if (isset($_POST['installstep']) && $_POST['installstep'] == '1' && $this->_data['admin_pass1'] == $this->_data['admin_pass2'] && $this->_data['admin_pass1'] != '' && $this->_data['admin_pass2'] != '' && $this->_data['mysql_unpriv_pass'] != '' && $this->_data['mysql_root_pass'] != '' && $this->_data['servername'] != '' && $this->_data['serverip'] != '' && $this->_data['httpuser'] != '' && $this->_data['httpgroup'] != '' && $this->_data['mysql_unpriv_user'] != $this->_data['mysql_root_user']) {
+			return true;
 		}
-		return $errors;
+		return false;
 	}
 
 	/**
@@ -137,17 +252,18 @@ abstract class FroxlorInstall
 	 *
 	 * @return array
 	 */
-	protected function _doInstall()
+	private function _doInstall()
 	{
-		$result=array();
-
+		$content = "<table class=\"noborder\">";
+		
 		// check for mysql-root-connection
-		$current=array('check'=>$this->_lng['install']['testing_mysql']);
+		$content .= $this->_status_message('begin', $this->_lng['install']['testing_mysql']);
 		
 		$options = array(
 			'PDO::MYSQL_ATTR_INIT_COMMAND' => 'SET names utf8,sql_mode="NO_AUTO_CREATE_USER,NO_ENGINE_SUBSTITUTION"'
 		);
 		$dsn = "mysql:host=" . $this->_data['mysql_host'] . ";";
+		$fatal_fail = false;
 		try {
 			$db_root = new PDO($dsn, $this->_data['mysql_root_user'], $this->_data['mysql_root_pass'], $options);
 		} catch (PDOException $e) {
@@ -163,36 +279,18 @@ abstract class FroxlorInstall
 				));
 			} catch (PDOException $e) {
 				// nope
-				$current['status']='red';
-				$current['message']=$e->getMessage();
-				array_push($result,$current);
-				return $result;
+				$content .= $this->_status_message('red', $e->getMessage());
+				$fatal_fail = true;
 			}
 		}
-		$current['status']='green';
-		$current['message']=PHP_VERSION;
-		array_push($result,$current);
-
-		// check for existing db and create backup if so
-		if (!$this->_backupExistingDatabase($result, $db_root))
-		{
-			return $result;
-		}
-
-		// create unprivileged user and the database itself
-		if (!$this->_createDatabaseAndUser($result, $db_root))
-		{
-			return $result;
-		}
-
-		// create unprivileged user and the database itself
-		if (!$this->_importDatabaseData($result))
-		{
-			return $result;
-		}
-
-		/*
-		// create unprivileged user and the database itself
+		
+		if (! $fatal_fail) {
+			
+			// ok, if we are here, the database connection is up and running
+			$content .= $this->_status_message('green', "OK");
+			// check for existing db and create backup if so
+			$content .= $this->_backupExistingDatabase($db_root);
+			// create unprivileged user and the database itself
 			$content .= $this->_createDatabaseAndUser($db_root);
 			// importing data to new database
 			$content .= $this->_importDatabaseData();
@@ -221,9 +319,33 @@ abstract class FroxlorInstall
 					$content .= $this->_createUserdataConf();
 				}
 			}
-		}*/
-
-		return $result;
+		}
+		
+		$content .= "</table>";
+		
+		// check if we have unrecoverable errors
+		if ($fatal_fail || $another_fail || $this->_abort) {
+			// D'oh
+			$navigation = '';
+			$msgcolor = 'red';
+			$message = $this->_lng['install']['testing_mysql_fail'];
+			$link = 'install.php?check=1';
+			$linktext = $this->_lng['click_here_to_goback'];
+		} else {
+			// all good
+			$navigation = '';
+			$msgcolor = 'green';
+			$message = $this->_lng['install']['froxlor_succ_installed'];
+			$link = '../index.php';
+			$linktext = $this->_lng['click_here_to_login'];
+		}
+		
+		eval("\$navigation .= \"" . $this->_getTemplate("pagebottom") . "\";");
+		
+		return array(
+			'pagecontent' => $content,
+			'pagenavigation' => $navigation
+		);
 	}
 
 	/**
@@ -438,12 +560,14 @@ abstract class FroxlorInstall
 	/**
 	 * Import froxlor.sql into database
 	 *
-	 * @return boolean ok or error
+	 * @param object $db_root
+	 *
+	 * @return string status messages
 	 */
-	private function _importDatabaseData(&$result)
+	private function _importDatabaseData()
 	{
-		$current=array('check'=>$this->_lng['install']['testing_new_db']);
-
+		$content = "";
+		$content .= $this->_status_message('begin', $this->_lng['install']['testing_new_db']);
 		$options = array(
 			'PDO::MYSQL_ATTR_INIT_COMMAND' => 'SET names utf8,sql_mode="NO_AUTO_CREATE_USER,NO_ENGINE_SUBSTITUTION"'
 		);
@@ -459,41 +583,39 @@ abstract class FroxlorInstall
 				$db->setAttribute(constant("PDO::" . $k), constant("PDO::" . $v));
 			}
 		} catch (PDOException $e) {
-			$current['status']='red';
-			$current['message']=$e->getMessage();
-			array_push($result,$current);
-			return false;
+			$content .= $this->_status_message('red', $e->getMessage());
+			$fatal_fail = true;
 		}
-		$current['status']='green';
-		$current['message']='OK';
-		array_push($result,$current);
 		
-		$current=array('check'=> $this->_lng['install']['importing_data']);
-
-		$db_schema = dirname(dirname(__FILE__)) . '/froxlor.sql';
-		$sql_query = @file_get_contents($db_schema);
-		$sql_query = $this->_remove_remarks($sql_query);
-		$sql_query = $this->_split_sql_file($sql_query, ';');
-		for ($i = 0; $i < sizeof($sql_query); $i ++) {
-			if (trim($sql_query[$i]) != '') {
-				try {
-					$dbresult = $db->query($sql_query[$i]);
-						} catch (\PDOException $e) {
-					$current['status']='red';
-					$current['message']=$e->getMessage();
-					array_push($result,$current);
-					return false;
+		if (! $fatal_fail) {
+			
+			$content .= $this->_status_message('green', 'OK');
+			
+			$content .= $this->_status_message('begin', $this->_lng['install']['importing_data']);
+			$db_schema = dirname(dirname(__FILE__)) . '/froxlor.sql';
+			$sql_query = @file_get_contents($db_schema);
+			$sql_query = $this->_remove_remarks($sql_query);
+			$sql_query = $this->_split_sql_file($sql_query, ';');
+			for ($i = 0; $i < sizeof($sql_query); $i ++) {
+				if (trim($sql_query[$i]) != '') {
+					try {
+						$result = $db->query($sql_query[$i]);
+					} catch (\PDOException $e) {
+						$content .= $this->_status_message('red', $e->getMessage());
+						$fatal_fail = true;
+						$this->_abort = true;
+						break;
+					}
 				}
 			}
+			
+			if (! $fatal_fail) {
+				$content .= $this->_status_message('green', 'OK');
+			}
+			$db = null;
 		}
 		
-		$db = null;
-
-		$current['status']='green';
-		$current['message']='OK';
-		array_push($result,$current);
-		
-		return true;
+		return $content;
 	}
 
 	/**
@@ -501,13 +623,16 @@ abstract class FroxlorInstall
 	 *
 	 * @param object $db_root
 	 *
-	 * @return boolean ok or error
+	 * @return string status messages
 	 */
-	private function _createDatabaseAndUser(&$result, &$db_root)
+	private function _createDatabaseAndUser(&$db_root)
 	{
+		$content = "";
+		
 		// so first we have to delete the database and
 		// the user given for the unpriv-user if they exit
-
+		$content .= $this->_status_message('begin', $this->_lng['install']['prepare_db']);
+		
 		$del_stmt = $db_root->prepare("DELETE FROM `mysql`.`user` WHERE `User` = :user AND `Host` = :accesshost");
 		$del_stmt->execute(array(
 			'user' => $this->_data['mysql_unpriv_user'],
@@ -536,10 +661,10 @@ abstract class FroxlorInstall
 		$del_stmt->execute();
 		
 		$db_root->query("FLUSH PRIVILEGES;");
-
-		array_push($result,array('check'=>$this->_lng['install']['prepare_db'],'status'=>'green','message'=>'OK'));
+		$content .= $this->_status_message('green', 'OK');
 		
 		// we have to create a new user and database for the froxlor unprivileged mysql access
+		$content .= $this->_status_message('begin', $this->_lng['install']['create_mysqluser_and_db']);
 		$ins_stmt = $db_root->prepare("CREATE DATABASE `" . str_replace('`', '', $this->_data['mysql_database']) . "` CHARACTER SET=utf8 COLLATE=utf8_general_ci");
 		$ins_stmt->execute();
 		
@@ -574,21 +699,22 @@ abstract class FroxlorInstall
 		
 		$db_root->query("FLUSH PRIVILEGES;");
 		$this->_data['mysql_access_host'] = implode(',', $mysql_access_host_array);
-
-		array_push($result,array('check'=>$this->_lng['install']['create_mysqluser_and_db'],'status'=>'green','message'=>'OK'));
+		$content .= $this->_status_message('green', 'OK');
 		
-		return true;
+		return $content;
 	}
 
 	/**
-	 * Check if an old database exists and back it up if necessary.
-	 * Returns true on success and false on error
+	 * Check if an old database exists and back it up if necessary
 	 *
 	 * @param object $db_root
+	 *
+	 * @return string status messages
 	 */
-	private function _backupExistingDatabase(&$result, &$db_root)
+	private function _backupExistingDatabase(&$db_root)
 	{
-		$ok=true;
+		$content = "";
+		
 		// check for existing of former database
 		$tables_exist = false;
 		$sql = "SELECT SCHEMA_NAME FROM INFORMATION_SCHEMA.SCHEMATA WHERE SCHEMA_NAME = :database";
@@ -605,7 +731,7 @@ abstract class FroxlorInstall
 		
 		if ($tables_exist) {
 			// tell whats going on
-			$current=array('check'=>$this->_lng['install']['backup_old_db']);
+			$content .= $this->_status_message('begin', $this->_lng['install']['backup_old_db']);
 			
 			// create temporary backup-filename
 			$filename = "/tmp/froxlor_backup_" . date('YmdHi') . ".sql";
@@ -624,22 +750,16 @@ abstract class FroxlorInstall
 				$command = $mysql_dump . " " . $this->_data['mysql_database'] . " -u " . $this->_data['mysql_root_user'] . " --password='" . $this->_data['mysql_root_pass'] . "' --result-file=" . $filename;
 				$output = exec($command);
 				if (stristr($output, "error")) {
-					$current['status']='red';
-					$current['message']=$this->_lng['install']['backup_failed'];
-					$ok=false;
+					$content .= $this->_status_message('red', $this->_lng['install']['backup_failed']);
 				} else {
-					$current['status']='green';
-					$current['message']='OK (' . $filename . ')';
+					$content .= $this->_status_message('green', 'OK (' . $filename . ')');
 				}
 			} else {
-				$current['status']='red';
-				$current['message']=$this->_lng['install']['backup_binary_missing'];
-				$ok=false;
+				$content .= $this->_status_message('red', $this->_lng['install']['backup_binary_missing']);
 			}
-			array_push($result,$current);
 		}
-
-		return $ok;
+		
+		return $content;
 	}
 
 	/**
@@ -808,14 +928,54 @@ abstract class FroxlorInstall
 	}
 
 	/**
+	 * generate form radio field for webserver-selection
+	 *
+	 * @param string $fieldname
+	 * @param boolean $checked
+	 * @param string $style
+	 *
+	 * @return string
+	 */
+	private function _getSectionItemCheckbox($fieldname = null, $checked = false, $style = "")
+	{
+		$fieldlabel = $this->_lng['install'][$fieldname];
+		if ($checked) {
+			$checked = 'checked="checked"';
+		}
+		$sectionitem = "";
+		eval("\$sectionitem .= \"" . $this->_getTemplate("dataitemchk") . "\";");
+		return $sectionitem;
+	}
+
+	/**
+	 * generate form checkbox field
+	 *
+	 * @param string $fieldname
+	 * @param boolean $checked
+	 * @param string $style
+	 *
+	 * @return string
+	 */
+	private function _getSectionItemYesNo($fieldname = null, $checked = false, $style = "")
+	{
+		$fieldlabel = $this->_lng['install'][$fieldname];
+		if ($checked) {
+			$checked = 'checked="checked"';
+		}
+		$sectionitem = "";
+		eval("\$sectionitem .= \"" . $this->_getTemplate("dataitemyesno") . "\";");
+		return $sectionitem;
+	}
+
+	/**
 	 * check for requirements froxlor needs
 	 */
-	protected function _requirementCheck()
+	private function _requirementCheck()
 	{
 		$result=array();
 
 		// check for correct php version
-		$current=array('check'=>$this->_lng['requirements']['phpversion']);
+		$current=array('requirement'=>$this->_lng['requirements']['phpversion']);
 		if (version_compare("5.3.0", PHP_VERSION, ">=")) {
 			$current['status']='red';
 			$current['message']=$this->_lng['requirements']['notfound'] . ' (' . PHP_VERSION . ')';
@@ -832,7 +992,7 @@ abstract class FroxlorInstall
 
 		// Check if magic_quotes_runtime is active | get_magic_quotes_runtime() is always FALSE since 5.4
 		if (version_compare(PHP_VERSION, "5.4.0", "<")) {
-			$current=array('check'=>$this->_lng['requirements']['phpmagic_quotes_runtime']);
+			$current=array('requirement'=>$this->_lng['requirements']['phpmagic_quotes_runtime']);
 			if (get_magic_quotes_runtime()) {
 				// deactivate it
 				set_magic_quotes_runtime(false);
@@ -847,7 +1007,7 @@ abstract class FroxlorInstall
 		}
 
 		// check for php_pdo and pdo_mysql
-		$current=array('check'=>$this->_lng['requirements']['phppdo']);
+		$current=array('requirement'=>$this->_lng['requirements']['phppdo']);
 		if (! extension_loaded('pdo') || in_array("mysql", PDO::getAvailableDrivers()) == false) {
 			$current['status']='red';
 			$current['message']=$this->_lng['requirements']['notinstalled'];
@@ -891,7 +1051,7 @@ abstract class FroxlorInstall
 		$this->_requirementCheckFor($result, 'zip', true, 'phpzip', 'zipdescription');
 
 		// check for open_basedir
-		$current=array('check'=>$this->_lng['requirements']['openbasedir']);
+		$current=array('requirement'=>$this->_lng['requirements']['openbasedir']);
 		$php_ob = @ini_get("open_basedir");
 		if (! empty($php_ob) && $php_ob != '') {
 			$current['status']='orange';
@@ -904,7 +1064,7 @@ abstract class FroxlorInstall
 		array_push($result,$current);
 		
 		// check for mysqldump binary in order to backup existing database
-		$current=array('check'=>$this->_lng['requirements']['mysqldump']);
+		$current=array('requirement'=>$this->_lng['requirements']['mysqldump']);
 
 		if (file_exists("/usr/bin/mysqldump") || file_exists("/usr/local/bin/mysqldump")) {
 			$current['status']='green';
@@ -918,10 +1078,57 @@ abstract class FroxlorInstall
 
 		return $result;
 	}
+	/**
+	 * check for requirements froxlor needs, return result array for html
+	 */
+	private function _requirementCheckResult()
+	{
+		// indicator whether we need to abort or not
+		$_die = false;
+		
+		$content = "<table class=\"noborder\">";
+		
+		$requirement_check_result=$this->_requirementCheck();
+		foreach ($requirement_check_result as &$rc)
+		{
+			if ($rc['status']=='green' && $rc['status']=='orange')
+			{
+				$_die = true;
+			}
+			$content .= $this->_status_message('begin', $rc['requirement']);
+			$message=$rc['message'];
+			if (array_key_exists('description',$rc))
+			{
+				$message.='<br>'.$rc['description'];
+			}
+		}
+
+		$content .= "</table>";
+		
+		// check if we have unrecoverable errors
+		$navigation = '';
+		if ($_die) {
+			$msgcolor = 'red';
+			$message = $this->_lng['requirements']['diedbecauseofrequirements'];
+			$link = htmlspecialchars($_SERVER['PHP_SELF']);
+			$linktext = $this->_lng['click_here_to_refresh'];
+		} else {
+			$msgcolor = 'green';
+			$message = $this->_lng['requirements']['froxlor_succ_checks'];
+			$link = htmlspecialchars($_SERVER['PHP_SELF']) . '?check=1';
+			$linktext = $this->_lng['click_here_to_continue'];
+		}
+		eval("\$navigation .= \"" . $this->_getTemplate("pagebottom") . "\";");
+		
+		return array(
+			'pagecontent' => $content,
+			'pagenavigation' => $navigation
+		);
+	}
 	
 	private function _requirementCheckFor(&$result, $ext = '', $optional = false, $lng_txt = "", $lng_desc = "")
 	{
-		$current=array('check'=>$this->_lng['requirements'][$lng_txt]);
+		$current=array('requirement'=>$this->_lng['requirements'][$lng_txt]);
 
 		if (! extension_loaded($ext)) {
 			if (!$optional) {
@@ -940,21 +1147,73 @@ abstract class FroxlorInstall
 	}
 
 	/**
-	 * Overwrite for language selection
+	 * send no-caching headers and set the default timezone
 	 */
-	protected function _detectLanguage($standardlanguage)
+	private function _sendHeaders()
 	{
-		return $standardlanguage;
+		// no caching
+		header("Cache-Control: no-store, no-cache, must-revalidate");
+		header("Pragma: no-cache");
+		header('Last-Modified: ' . gmdate('D, d M Y H:i:s \G\M\T', time()));
+		header('Expires: ' . gmdate('D, d M Y H:i:s \G\M\T', time()));
+		
+		// ensure that default timezone is set
+		if (function_exists("date_default_timezone_set") && function_exists("date_default_timezone_get")) {
+			@date_default_timezone_set(@date_default_timezone_get());
+		}
+	}
+
+	/**
+	 * check for the userdata - if it exists then froxlor is
+	 * already installed and we show a nice note
+	 */
+	private function _checkUserDataFile()
+	{
+		$userdata = $this->_basepath . '/lib/userdata.inc.php';
+		if (file_exists($userdata)) {
+			// includes the usersettings (MySQL-Username/Passwort)
+			// to test if Froxlor is already installed
+			require $this->_basepath . '/lib/userdata.inc.php';
+			
+			if (isset($sql) && is_array($sql)) {
+				// use sparkle theme for the notice
+				$installed_hint = file_get_contents($this->_basepath . '/templates/Sparkle/misc/alreadyinstalledhint.tpl');
+				$installed_hint = str_replace("<CURRENT_YEAR>", date('Y', time()), $installed_hint);
+				die($installed_hint);
+			}
+		}
 	}
 
 	/**
 	 * include the chose language or else default (english)
 	 */
-	protected function _includeLanguageFile()
+	private function _includeLanguageFile()
 	{
 		// set default
 		$standardlanguage = 'english';
-		$this->_activelng = $this->_detectLanguage($standardlanguage);
+		
+		// check either _GET or _POST
+		if (isset($_GET['language']) && isset($this->_languages[$_GET['language']])) {
+			$this->_activelng = $_GET['language'];
+		} elseif (isset($_POST['language']) && isset($this->_languages[$_POST['language']])) {
+			$this->_activelng = $_POST['language'];
+		} elseif (isset($_SERVER['HTTP_ACCEPT_LANGUAGE'])) {
+			// try to guess the right language
+			$lang = substr($_SERVER['HTTP_ACCEPT_LANGUAGE'], 0, 2);
+			switch ($lang) {
+				case "de":
+					$this->_activelng = 'german';
+					break;
+				case "fr":
+					$this->_activelng = 'french';
+					break;
+				default:
+					$this->_activelng = $standardlanguage;
+					break;
+			}
+		} else {
+			$this->_activelng = $standardlanguage;
+		}
 		
 		// require english base language as fallback
 		$lngfile = $this->_basepath . '/install/lng/' . $standardlanguage . '.lng.php';
@@ -973,6 +1232,132 @@ abstract class FroxlorInstall
 				require $lngfile;
 				$this->_lng = $lng;
 			}
+		}
+	}
+
+	/**
+	 * Get template from filesystem
+	 *
+	 * @param string $template
+	 *        	name of the template including subdirectory
+	 *        	
+	 * @return string
+	 */
+	private function _getTemplate($template = null)
+	{
+		// build filename
+		$filename = $this->_basepath . '/install/templates/' . $template . '.tpl';
+		// check existence
+		if (file_exists($filename) && is_readable($filename)) {
+			$templatefile = addcslashes(file_get_contents($filename), '"\\');
+			// loop through template more than once in case we have an "if"-statement in another one
+			while (preg_match('/<if[ \t]*(.*)>(.*)(<\/if>|<else>(.*)<\/if>)/Uis', $templatefile)) {
+				$templatefile = preg_replace('/<if[ \t]*(.*)>(.*)(<\/if>|<else>(.*)<\/if>)/Uis', '".( ($1) ? ("$2") : ("$4") )."', $templatefile);
+			}
+		} else {
+			$templatefile = 'TEMPLATE NOT FOUND: ' . $filename;
+		}
+		
+		return $templatefile;
+	}
+
+	/**
+	 * output status
+	 *
+	 * @param string $case
+	 * @param string $text
+	 *
+	 * @return string
+	 */
+	private function _status_message($case, $text)
+	{
+		if ($case == 'begin') {
+			return '<tr><td class="install-step">' . $text;
+		} else {
+			return '</td><td><span class="' . $case . '">' . $text . '</span></td></tr>';
+		}
+	}
+
+	/**
+	 * get/guess servername
+	 */
+	private function _guessServerName()
+	{
+		// from form?
+		if (! empty($_POST['servername'])) {
+			$this->_data['servername'] = $_POST['servername'];
+			return;
+			// from $_SERVER
+		} else if (! empty($_SERVER['SERVER_NAME'])) {
+			// no ips
+			if ($this->_validate_ip($_SERVER['SERVER_NAME']) == false) {
+				$this->_data['servername'] = $_SERVER['SERVER_NAME'];
+				return;
+			}
+		}
+		// empty
+		$this->_data['servername'] = '';
+	}
+
+	/**
+	 * get/guess serverip
+	 */
+	private function _guessServerIP()
+	{
+		// from form
+		if (! empty($_POST['serverip'])) {
+			$this->_data['serverip'] = $_POST['serverip'];
+			return;
+			// from $_SERVER
+		} elseif (! empty($_SERVER['SERVER_ADDR'])) {
+			$this->_data['serverip'] = $_SERVER['SERVER_ADDR'];
+			return;
+		}
+		// empty
+		$this->_data['serverip'] = '';
+	}
+
+	/**
+	 * get/guess webserver-software
+	 */
+	private function _guessWebserver()
+	{
+		// post
+		if (! empty($_POST['webserver'])) {
+			$this->_data['webserver'] = $_POST['webserver'];
+		} else {
+			if (strtoupper(@php_sapi_name()) == "APACHE2HANDLER" || stristr($_SERVER['SERVER_SOFTWARE'], "apache/2")) {
+				$this->_data['webserver'] = 'apache24';
+			} elseif (substr(strtoupper(@php_sapi_name()), 0, 8) == "LIGHTTPD" || stristr($_SERVER['SERVER_SOFTWARE'], "lighttpd")) {
+				$this->_data['webserver'] = 'lighttpd';
+			} elseif (substr(strtoupper(@php_sapi_name()), 0, 8) == "NGINX" || stristr($_SERVER['SERVER_SOFTWARE'], "nginx")) {
+				$this->_data['webserver'] = 'nginx';
+			} else {
+				// we don't need to bail out, since unknown does not affect any critical installation routines
+				$this->_data['webserver'] = 'unknown';
+			}
+		}
+	}
+
+	/**
+	 * check if POST field is set and get value for the
+	 * internal data array, if not set use either '' or $default if != null
+	 *
+	 * @param string $fieldname
+	 * @param string $default
+	 *
+	 */
+	private function _getPostField($fieldname = null, $default = null)
+	{
+		// initialize
+		$this->_data[$fieldname] = '';
+		// set default
+		if ($default !== null) {
+			$this->_data[$fieldname] = $default;
+		}
+		// check field
+		if (! empty($_POST[$fieldname])) {
+			$this->_data[$fieldname] = $_POST[$fieldname];
 		}
 	}
 
