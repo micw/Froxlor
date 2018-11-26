@@ -1,0 +1,16 @@
+language: php
+php:
+  - '7.0'
+install:
+  - composer install
+  - $(pwd)/vendor/bin/phpdox
+script:
+  - ant full-build-parallel
+      -Dpdepend=$(pwd)/vendor/bin/pdepend
+      -Dphpmd=$(pwd)/vendor/bin/phpmd
+      -Dphpcpd=$(pwd)/vendor/bin/phpcpd
+      -Dphpcs=$(pwd)/vendor/bin/phpcs
+      -Dphploc=$(pwd)/vendor/bin/phploc
+      -Dphpdox=$(pwd)/vendor/bin/phpdox
+      -Dphpunit=phpunit
+
