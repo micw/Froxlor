@@ -1,27 +1,8 @@
 <?php
-if (! file_exists('/etc/froxlor-test.pwd') || ! file_exists('/etc/froxlor-test.rpwd')) {
-	die('This is not the test-system...' . PHP_EOL);
+if (!file_exists($userdata)) {
+	print($userdata . " does not exist - please setup before run the tests" . PHP_EOL);
+	exit(1);
 }
-$pwd = trim(file_get_contents('/etc/froxlor-test.pwd'));
-$rpwd = trim(file_get_contents('/etc/froxlor-test.rpwd'));
-
-$userdata_content = "<?php
-\$sql['user'] = 'froxlor010';
-\$sql['password'] = '$pwd';
-\$sql['host'] = 'localhost';
-\$sql['db'] = 'froxlor010';
-\$sql_root[0]['user'] = 'root';
-\$sql_root[0]['password'] = '$rpwd';
-\$sql_root[0]['host'] = 'localhost';
-\$sql_root[0]['caption'] = 'Test default';
-\$sql['debug'] = true;" . PHP_EOL;
-
-$userdata = dirname(__DIR__) . '/lib/userdata.inc.php';
-
-if (file_exists($userdata)) {
-	rename($userdata, $userdata . ".bak");
-}
-file_put_contents($userdata, $userdata_content);
 
 // include autoloader / api / etc
 require dirname(__DIR__) . '/lib/classes/api/api_includes.inc.php';
