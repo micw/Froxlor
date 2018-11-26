@@ -13,4 +13,3 @@ script:
       -Dphploc=$(pwd)/vendor/bin/phploc
       -Dphpdox=$(pwd)/vendor/bin/phpdox
       -Dphpunit=phpunit
-
